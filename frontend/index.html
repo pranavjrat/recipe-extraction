@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Recipe Extractor & Meal Planner</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Recipe Extraction</p>
+          <h1>Extract structured recipes and browse your saved history.</h1>
+          <p class="subhead">Paste a recipe blog URL, generate a structured recipe card, and review past extractions from the database.</p>
+        </div>
+      </header>
+
+      <nav class="tabs" aria-label="Recipe app tabs">
+        <button class="tab-btn active" data-tab="extract">Extract Recipe</button>
+        <button class="tab-btn" data-tab="history">Saved Recipes</button>
+      </nav>
+
+      <main>
+        <section id="extract-tab" class="tab-pane active">
+          <div class="panel panel-input">
+            <label for="recipe-url">Recipe blog URL</label>
+            <div class="input-row">
+              <input id="recipe-url" type="url" placeholder="https://www.allrecipes.com/recipe/..." />
+              <button id="extract-btn">Extract Recipe</button>
+            </div>
+            <p class="helper">The backend scrapes the page, extracts structured fields, and stores the result in PostgreSQL or SQLite fallback.</p>
+            <label for="recipe-fallback">Optional raw recipe text or HTML</label>
+            <textarea id="recipe-fallback" rows="5" placeholder="Paste recipe text or HTML here if the site blocks automated access."></textarea>
+            <p class="helper">Use this when a site returns 403. The backend can extract from pasted text or HTML without fetching the URL.</p>
+          </div>
+
+          <div id="loading" class="status hidden">Extracting recipe...</div>
+          <div id="error" class="status error hidden"></div>
+
+          <section id="recipe-result" class="result-grid hidden"></section>
+        </section>
+
+        <section id="history-tab" class="tab-pane">
+          <div class="panel">
+            <div class="panel-header">
+              <h2>Saved Recipes</h2>
+              <span id="history-count" class="muted"></span>
+            </div>
+            <div id="history-loading" class="status hidden">Loading history...</div>
+            <div class="table-wrap">
+              <table class="history-table" aria-label="Saved recipes history">
+                <thead>
+                  <tr>
+                    <th>Select</th>
+                    <th>Title</th>
+                    <th>Cuisine</th>
+                    <th>Difficulty</th>
+                    <th>Date Extracted</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="history-tbody"></tbody>
+              </table>
+            </div>
+            <div id="no-history" class="status hidden">No saved recipes yet.</div>
+            <div class="planner-panel">
+              <div class="panel-header">
+                <h2>Meal Planner</h2>
+                <button id="plan-btn" class="secondary-btn">Generate Meal Plan</button>
+              </div>
+              <p class="helper">Select 3-5 saved recipes from the table to generate a merged shopping list and simple meal plan.</p>
+              <div id="plan-result" class="plan-result hidden"></div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="details-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-card">
+        <button class="modal-close" id="modal-close" aria-label="Close details">×</button>
+        <div id="modal-content"></div>
+      </div>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>

@@ -1,0 +1,1 @@
+"""Recipe extractor backend package."""

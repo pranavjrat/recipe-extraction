@@ -1,0 +1,1 @@
+/usr/bin/postgres "-D" "/home/heisenberg/Documents/programs/wiki-quiz-generator/.postgres/data" "-p" "5432" "-h" "127.0.0.1" "-k" "/home/heisenberg/Documents/programs/wiki-quiz-generator/.postgres/socket"

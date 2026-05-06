@@ -138,8 +138,11 @@ Returns a small day-by-day meal plan and a merged shopping list for the selected
 
 ## Screenshots
 
-Add the required screenshots after running the app:
+### Tab 2: Saved Recipes History
+The history table displays all extracted recipes with select checkboxes, cuisine, difficulty badges, and date extracted.
+![Saved Recipes History](screenshots/01-history-table.png)
 
-- Recipe extraction page
-- History view
-- Details modal
+### Details Modal: Recipe Full View
+Click "Details" from either the extraction result (Tab 1) or history table (Tab 2) to open a reusable modal showing complete recipe information: metadata, nutrition, ingredients, instructions, substitutions, related recipes, and shopping list.
+![Details Modal - Lasagna](screenshots/02-details-modal-lasagna.png)
+![Details Modal - Grilled Cheese](screenshots/03-details-modal-grilled-cheese.png)
