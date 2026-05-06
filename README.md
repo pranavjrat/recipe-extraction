@@ -148,4 +148,4 @@ Returns a small day-by-day meal plan and a merged shopping list for the selected
 
 ## Details Section in Tab 2
 
-![Details Section in Tab 2](screenshots/Pasted%20image%2020260506092759.png)
+![Details Section in Tab 2](screenshots/Pasted%20image%20260506100845.png)
