@@ -23,9 +23,9 @@ It provides:
 ## Technical Requirements
 
 - Backend: FastAPI
-- Database: PostgreSQL, with SQLite only as a local fallback if `DATABASE_URL` is not set
+- Database: PostgreSQL only
 - Frontend: minimal HTML, CSS, and JavaScript
-- LLM: LangChain with a free-tier provider such as Groq via `GROQ_API_KEY`
+- LLM: LangChain with Gemini via `GEMINI_API_KEY` or Groq via `GROQ_API_KEY`
 - Scraping: BeautifulSoup over recipe blog HTML pages
 - Data source: recipe blog URLs only, no external recipe APIs
 
@@ -50,6 +50,17 @@ cp .env.example .env
 docker compose up -d db
 ```
 
+Or start PostgreSQL directly with Docker:
+
+```bash
+docker run -d \
+  --name postgres \
+  -e POSTGRES_PASSWORD=password \
+  -e POSTGRES_DB=recipe_planner \
+  -p 5432:5432 \
+  postgres:15
+```
+
 Then run the backend from `backend/` so it picks up `DATABASE_URL` from `.env`:
 
 ```bash
@@ -57,7 +68,7 @@ cd backend
 uvicorn app.main:app --reload --port 8001
 ```
 
-If you use the root launcher, it will still start the frontend and backend together, and the backend will use PostgreSQL automatically when `DATABASE_URL` is set.
+If you use the root launcher, it will still start the frontend and backend together. PostgreSQL must be running before the backend starts.
 
 ## Backend Setup
 
@@ -79,11 +90,15 @@ uvicorn app.main:app --reload --port 8001
 Environment variables:
 
 ```bash
-DATABASE_URL=postgresql://username:password@localhost:5432/recipe_db
-GROQ_API_KEY=your_key_here
+DATABASE_URL=postgresql://postgres:password@localhost:5432/recipe_planner
+GEMINI_API_KEY=your_gemini_key_here
+GEMINI_MODEL=gemini-1.5-flash
+# or:
+GROQ_API_KEY=your_groq_key_here
+GROQ_MODEL=llama-3.1-8b-instant
 ```
 
-If `DATABASE_URL` is not set, the backend falls back to a SQLite file at `backend/recipe_dev.db`, so the same database is reused across runs.
+Recipe extraction requires one valid LLM key. The backend scrapes the recipe page, cleans the HTML with BeautifulSoup, sends the extracted text to the configured LangChain chat model, validates the JSON response, and stores both the scraped text and generated JSON in PostgreSQL.
 
 ## Frontend Setup
 

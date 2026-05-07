@@ -25,4 +25,10 @@ class Recipe(Base):
     related_recipes = Column(JSON, nullable=True)
 
     scraped_html = Column(Text, nullable=True)
+    extracted_text = Column(Text, nullable=True)
+    llm_response = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    @property
+    def nutrition_estimate(self):
+        return self.nutrition

@@ -20,7 +20,7 @@
     "Cook sandwich 3–4 minutes per side until golden brown and cheese is melted.",
     "Slice and serve hot."
   ],
-  "nutrition": {
+  "nutrition_estimate": {
     "calories": 350,
     "protein": "12g",
     "carbs": "30g",

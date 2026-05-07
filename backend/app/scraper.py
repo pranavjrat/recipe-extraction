@@ -106,15 +106,34 @@ class RecipeScraper:
                 import json
                 data = json.loads(script.string)
                 # Handle both single object and array of objects
-                if isinstance(data, list):
-                    for item in data:
-                        if item.get('@type', '').lower() == 'recipe':
-                            return item
-                elif isinstance(data, dict) and data.get('@type', '').lower() == 'recipe':
-                    return data
+                recipe = self._find_recipe_jsonld(data)
+                if recipe:
+                    return recipe
             except (json.JSONDecodeError, AttributeError, TypeError):
                 # Malformed JSON or invalid script; skip to next
                 continue
+        return None
+
+    def _find_recipe_jsonld(self, data):
+        if isinstance(data, list):
+            for item in data:
+                recipe = self._find_recipe_jsonld(item)
+                if recipe:
+                    return recipe
+        if not isinstance(data, dict):
+            return None
+
+        item_type = data.get('@type') or data.get('type') or ''
+        if isinstance(item_type, list):
+            is_recipe = any(str(value).lower() == 'recipe' for value in item_type)
+        else:
+            is_recipe = str(item_type).lower() == 'recipe'
+        if is_recipe:
+            return data
+
+        graph = data.get('@graph')
+        if graph:
+            return self._find_recipe_jsonld(graph)
         return None
 
     def heuristic_extract(self, html: str) -> dict:
@@ -150,14 +169,14 @@ class RecipeScraper:
             for ul in soup.find_all(['ul', 'ol'], class_=lambda x: x and cls in x.lower()):
                 for li in ul.find_all('li'):
                     txt = li.get_text().strip()
-                    if txt:
+                    if txt and txt not in ingredients:
                         ingredients.append(txt)
         # Fallback: scan all li tags for those containing unit keywords
         if not ingredients:
             for li in soup.find_all('li'):
                 txt = li.get_text().strip()
                 # Heuristic: ingredient li tags usually contain quantity units
-                if any(tok in txt.lower() for tok in ['cup', 'tbsp', 'tsp', 'slice', 'ounce', 'oz', 'g', 'kg', 'ml']):
+                if txt not in ingredients and any(tok in txt.lower() for tok in ['cup', 'tbsp', 'tsp', 'slice', 'ounce', 'oz', 'g', 'kg', 'ml']):
                     ingredients.append(txt)
 
         # Extract instructions: prioritize marked lists, fall back to paragraph scan
@@ -166,14 +185,14 @@ class RecipeScraper:
             for ol in soup.find_all(['ol', 'ul'], class_=lambda x: x and cls in x.lower()):
                 for li in ol.find_all('li'):
                     txt = li.get_text().strip()
-                    if txt:
+                    if txt and txt not in instructions:
                         instructions.append(txt)
         # Fallback: scan paragraphs for those containing cooking verbs
         if not instructions:
             for p in soup.find_all('p'):
                 txt = p.get_text().strip()
                 # Heuristic: instruction paragraphs are typically 5+ words and contain cooking verbs
-                if txt and len(txt.split()) > 5 and any(word in txt.lower() for word in ['mix', 'bake', 'cook', 'heat', 'stir', 'add', 'pour']):
+                if txt and txt not in instructions and len(txt.split()) > 5 and any(word in txt.lower() for word in ['mix', 'bake', 'cook', 'heat', 'stir', 'add', 'pour']):
                     instructions.append(txt)
 
         return {

@@ -10,3 +10,4 @@ alembic
 typing-extensions
 langchain
 langchain-groq
+langchain-google-genai

@@ -1,26 +1,28 @@
-You are an assistant that extracts structured recipe data from HTML page content.
-Your task is to convert unstructured text into a clean, machine-readable format.
+Extract recipe data and generate enrichment fields as JSON.
 
-IMPORTANT RULES (follow strictly):
-1. Extract ONLY information explicitly visible in the provided HTML content.
-2. Do NOT invent, hallucinate, or infer missing data. Use null for missing fields.
-3. Keep ingredient strings EXACTLY as they appear (with quantities and units).
-4. For instructions, preserve the sequence and exact wording where possible.
-5. Output ONLY a valid JSON object—no markdown, no explanation.
+EXTRACT (from text):
+- title (REQUIRED, string)
+- cuisine (string or null)
+- prep_time, cook_time, total_time (string or null)
+- servings (number or null)
+- difficulty ("easy"|"medium"|"hard" - infer if needed)
+- ingredients (REQUIRED, array of {quantity, unit, item})
+- instructions (REQUIRED, array of strings)
 
-JSON Structure:
-{
-  "title": "Recipe name or null",
-  "cuisine": "Cuisine type or null",
-  "prep_time": "Duration like '15 mins' or null",
-  "cook_time": "Duration like '30 mins' or null",
-  "total_time": "Total duration or null",
-  "servings": "Number or description like '4' or '4-6 servings' or null",
-  "ingredients": ["exact ingredient string", "another ingredient"],
-  "instructions": ["step 1", "step 2"]
-}
+GENERATE (always include):
+- nutrition_estimate: {calories: number, protein/carbs/fat: string}
+- substitutions: 3 strings like "Replace X with Y for Z"
+- shopping_list: {category: [items]} (2+ categories)
+- related_recipes: 3 recipe names
 
-HTML Content:
-{html}
+JSON RULES: 
+- Escape quotes and backslashes: \" and \\
+- Use lowercase true/false/null only
+- No trailing commas
+- All strings in double quotes
+- Return ONLY valid JSON - no markdown, no explanations, no text outside the JSON object
 
-Return ONLY the JSON object. No explanations.
+MINIMAL WORKING EXAMPLE (compact single line):
+{"title":"Toast","cuisine":null,"prep_time":"5m","cook_time":"3m","total_time":"8m","servings":1,"difficulty":"easy","ingredients":[{"quantity":"2","unit":"slices","item":"bread"},{"quantity":null,"unit":null,"item":"butter"}],"instructions":["Toast bread","Spread butter"],"nutrition_estimate":{"calories":150,"protein":"3g","carbs":"20g","fat":"6g"},"substitutions":["Replace butter with oil","Use whole wheat bread","Add jam"],"shopping_list":{"bakery":["bread"],"dairy":["butter"]},"related_recipes":["Scrambled Eggs","Pancakes","Oatmeal"]}
+
+{scraped_text}

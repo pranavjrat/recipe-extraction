@@ -62,6 +62,11 @@ async function extractRecipe() {
 
     if (!response.ok) {
       const errorPayload = await response.json().catch(() => ({}));
+      if (errorPayload.detail === 'Recipe Saved in History') {
+        showError('Recipe Already Saved in History');
+        loadHistory();
+        return;
+      }
       throw new Error(errorPayload.detail || 'Failed to extract recipe.');
     }
 
@@ -75,6 +80,7 @@ async function extractRecipe() {
 }
 
 function renderRecipe(recipe) {
+  const nutrition = recipe.nutrition_estimate || recipe.nutrition || {};
   resultSection.innerHTML = `
     <article class="card hero-card">
       <div class="card-heading">
@@ -109,7 +115,7 @@ function renderRecipe(recipe) {
     <section class="grid-3">
       <article class="card">
         <h3>Nutrition Estimate</h3>
-        ${renderNutrition(recipe.nutrition || {})}
+        ${renderNutrition(nutrition)}
       </article>
       <article class="card">
         <h3>Substitutions</h3>
@@ -207,6 +213,7 @@ async function openDetails(id) {
 }
 
 function buildModalMarkup(recipe) {
+  const nutrition = recipe.nutrition_estimate || recipe.nutrition || {};
   return `
     <div class="modal-header">
       <div>
@@ -222,7 +229,7 @@ function buildModalMarkup(recipe) {
       </article>
       <article class="card subtle">
         <h3>Nutrition</h3>
-        ${renderNutrition(recipe.nutrition || {})}
+        ${renderNutrition(nutrition)}
       </article>
     </div>
     <div class="grid-2 modal-grid">

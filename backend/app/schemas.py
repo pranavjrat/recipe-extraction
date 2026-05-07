@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from pydantic import AnyUrl, BaseModel
 
@@ -31,11 +31,12 @@ class RecipeResponse(BaseModel):
     prep_time: Optional[str]
     cook_time: Optional[str]
     total_time: Optional[str]
-    servings: Optional[str]
+    servings: Optional[Union[int, str]]
     difficulty: Optional[str]
     ingredients: Optional[List[Ingredient]]
     instructions: Optional[List[str]]
     nutrition: Optional[Nutrition]
+    nutrition_estimate: Optional[Nutrition]
     substitutions: Optional[List[str]]
     shopping_list: Optional[dict]
     related_recipes: Optional[List[str]]

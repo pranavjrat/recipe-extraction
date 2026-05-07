@@ -1,240 +1,320 @@
-import os
 import json
+import os
+import re
+import logging
+from pathlib import Path
 from typing import Any, Dict
+
 from bs4 import BeautifulSoup
+from langchain_core.messages import HumanMessage
 
 from .scraper import RecipeScraper
 
+logger = logging.getLogger(__name__)
+
+try:
+    from langchain_google_genai import ChatGoogleGenerativeAI
+except Exception:
+    ChatGoogleGenerativeAI = None
+
 try:
     from langchain_groq import ChatGroq
-    from langchain_core.messages import HumanMessage
-    LLM_AVAILABLE = True
 except Exception:
-    LLM_AVAILABLE = False
+    ChatGroq = None
 
 
 class RecipeExtractor:
     """
-    Extracts and enriches recipe data from HTML pages.
-    
-    Features:
-    - JSON-LD structured data extraction (primary, most reliable)
-    - Heuristic HTML parsing fallback for unstructured pages
-    - Ingredient parsing with quantity/unit/item separation
-    - Difficulty inference from instruction count
-    - Nutrition estimation based on serving size
-    - Ingredient substitution suggestions
-    - Related recipe recommendations
-    - Shopping list categorization by food type
-    
-    The LLM (Groq) is optional; all features work with heuristics.
+    Scrape a recipe page, clean the HTML with BeautifulSoup, and send the
+    extracted text to an LLM. The LLM returns the complete structured recipe
+    and generated enrichment fields required by the assignment.
     """
+
     def __init__(self):
         self.scraper = RecipeScraper()
-        self.llm = None
-        if LLM_AVAILABLE:
-            api_key = os.getenv('GROQ_API_KEY') or os.getenv('LLM_API_KEY')
-            if api_key:
-                self.llm = ChatGroq(api_key=api_key, model="llama-3.1-8b-instant", temperature=0.2)
+        base_dir = Path(__file__).resolve().parents[2]
+        self.recipe_prompt_path = base_dir / "prompts" / "prompt_recipe.txt"
+        self.llm = self._build_llm()
 
     def extract(self, url: str, raw_html: str | None = None, raw_text: str | None = None) -> Dict[str, Any]:
-        """Extract recipe from URL, raw HTML, or raw text.
-        
-        Args:
-            url: Recipe page URL (or identifier if using raw_html/raw_text)
-            raw_html: Optional pre-fetched HTML content (bypasses fetch)
-            raw_text: Optional raw recipe text (auto-wrapped as HTML)
-        
-        Returns:
-            Dict with keys: title, cuisine, prep_time, cook_time, total_time, servings,
-            difficulty, ingredients (parsed: qty/unit/item), instructions, nutrition,
-            substitutions, shopping_list (categorized), related_recipes, url, scraped_html.
-        
-        Raises:
-            PermissionError: If site blocks automated access (HTTP 403)
-            requests.HTTPError: For other HTTP errors
-        """
         if raw_html:
             html, final_url = raw_html, url
-            return self._extract_from_html(html, final_url)
-
-        if raw_text:
-            # Wrap raw text as simple HTML for consistent processing
-            html = f"<html><body>{''.join(f'<p>{line.strip()}</p>' for line in raw_text.splitlines() if line.strip())}</body></html>"
-            return self._extract_from_html(html, url)
-
-        html, final_url = self.scraper.fetch(url)
-        return self._extract_from_html(html, final_url or url)
-
-    def _extract_from_html(self, html: str, source_url: str) -> Dict[str, Any]:
-        """Core extraction: parse HTML and enrich recipe fields.
-        
-        Extraction priority:
-        1. JSON-LD structured data (most reliable, industry standard)
-        2. Heuristic HTML parsing (fallback for unstructured pages)
-        3. Page h1 tag (final fallback for title)
-        
-        Then applies post-processing: ingredient parsing, difficulty inference,
-        nutrition estimation, substitution suggestions, shopping categorization,
-        and related recipe recommendations.
-        """
-        html = html or ""
-
-        # Primary: Try JSON-LD structured data (most sites include this)
-        jsonld = self.scraper.extract_json_ld(html)
-        result: Dict[str, Any] = {}
-        if jsonld:
-            # JSON-LD provides clean, machine-readable recipe data per schema.org
-            result['title'] = jsonld.get('name')
-            result['cuisine'] = jsonld.get('recipeCuisine')
-            result['prep_time'] = jsonld.get('prepTime')
-            result['cook_time'] = jsonld.get('cookTime')
-            result['total_time'] = jsonld.get('totalTime')
-            result['servings'] = jsonld.get('recipeYield')
-            result['ingredients_raw'] = jsonld.get('recipeIngredient') or jsonld.get('ingredients') or []
-            # Handle both single instruction (string) and list of instructions (objects or strings)
-            instructions = []
-            instr = jsonld.get('recipeInstructions')
-            if isinstance(instr, list):
-                for step in instr:
-                    if isinstance(step, dict):
-                        instructions.append(step.get('text'))
-                    else:
-                        instructions.append(str(step))
-            elif isinstance(instr, str):
-                instructions = [instr]
-            result['instructions'] = [s for s in instructions if s]
+        elif raw_text:
+            html, final_url = self._text_to_html(raw_text), url
         else:
-            # Fallback: heuristic extraction for pages without structured data
-            heur = self.scraper.heuristic_extract(html)
-            result['title'] = heur.get('title')
-            result['ingredients_raw'] = heur.get('ingredients', [])
-            result['instructions'] = heur.get('instructions', [])
+            html, final_url = self.scraper.fetch(url)
 
-        # Final title fallback: look for h1 tag if title still missing
-        if not result.get('title'):
-            soup = BeautifulSoup(html, 'html.parser')
-            title_tag = soup.find('h1')
-            if title_tag:
-                result['title'] = title_tag.get_text().strip()
+        scraped_text = self._extract_text_with_beautifulsoup(html)
+        if not scraped_text:
+            raise ValueError("No readable recipe text could be extracted from the page.")
 
-        result['url'] = source_url
-        # Store truncated HTML for audit/debugging (first 50KB)
-        result['scraped_html'] = html[:50000]
+        recipe = self._extract_recipe_with_llm(scraped_text)
+        recipe = self._normalize_recipe(recipe)
+        recipe["url"] = final_url or url
+        recipe["scraped_html"] = html[:5000]
+        recipe["extracted_text"] = scraped_text[:5000]
+        recipe["llm_response"] = {
+            key: value
+            for key, value in recipe.items()
+            if key not in {"scraped_html", "extracted_text", "llm_response"}
+        }
+        return recipe
 
-        # INGREDIENT PARSING: Separate quantity, unit, and item name.
-        # Heuristic: if first token is numeric/contains digits → quantity
-        #            if next token is short (≤4 chars) and likely unit → unit
-        #            remainder → item name
-        # Examples: "2 cups flour" → qty=2, unit=cups, item=flour
-        #           "1/4 tsp salt" → qty=1/4, unit=tsp, item=salt
-        #           "fresh basil" → qty=None, unit=None, item=fresh basil
-        parsed_ingredients = []
-        for ing in result.get('ingredients_raw', []):
-            qty = None
-            unit = None
-            item = ing
-            parts = ing.split()
-            # Check if first token looks like a quantity (numeric)
-            if parts and (parts[0].replace('/', '').replace('-', '').replace('.', '').isdigit() or any(ch.isdigit() for ch in parts[0])):
-                # First token is a quantity (e.g., "2", "1/4", "2-3")
-                qty = parts[0]
-                # Check if next token is a likely unit (short, common abbreviations)
-                if len(parts) > 1 and len(parts[1]) <= 4:
-                    unit = parts[1]
-                    item = ' '.join(parts[2:]) if len(parts) > 2 else ''
-                else:
-                    # Next token is too long; treat as part of item
-                    item = ' '.join(parts[1:])
-            parsed_ingredients.append({'quantity': qty, 'unit': unit, 'item': item})
+    def _build_llm(self):
+        # Prioritize Groq (free tier is reliable)
+        groq_key = os.getenv("GROQ_API_KEY") or os.getenv("LLM_API_KEY")
+        if groq_key:
+            if ChatGroq is None:
+                return None
+            return ChatGroq(
+                api_key=groq_key,
+                model=os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
+                temperature=0.1,
+            )
 
-        result['ingredients'] = parsed_ingredients
+        # Fall back to Gemini if Groq not available
+        gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+        if gemini_key:
+            if ChatGoogleGenerativeAI is None:
+                return None
+            return ChatGoogleGenerativeAI(
+                google_api_key=gemini_key,
+                model=os.getenv("GEMINI_MODEL", "gemini-1.5-flash"),
+                temperature=0.1,
+            )
 
-        # DIFFICULTY INFERENCE: Based on number of instruction steps
-        # Heuristic: easy (1-4 steps) → quick meals
-        #            medium (5-10 steps) → standard recipes
-        #            hard (11+ steps) → complex techniques
-        instr_count = len(result.get('instructions') or [])
-        if instr_count <= 4:
-            difficulty = 'easy'
-        elif instr_count <= 10:
-            difficulty = 'medium'
-        else:
-            difficulty = 'hard'
-        result['difficulty'] = difficulty
+        return None
 
-        # NUTRITION ESTIMATION: Simple model based on serving count
-        # Baseline: ~200 cal/serving (heuristic average for recipes)
-        # Macro split: 10% protein, 40% carbs, 30% fat (typical balanced diet)
-        # Used when LLM is unavailable; better estimates come from ingredient analysis
-        servings = 1
-        serv_val = result.get('servings')
-        if serv_val:
+    def _extract_recipe_with_llm(self, scraped_text: str) -> Dict[str, Any]:
+        if self.llm is None:
+            raise RuntimeError(
+                "Configure GEMINI_API_KEY or a valid GROQ_API_KEY. "
+                "Recipe extraction requires sending scraped BeautifulSoup text to an LLM via LangChain."
+            )
+        prompt_template = self.recipe_prompt_path.read_text(encoding="utf-8")
+        prompt = prompt_template.replace("{scraped_text}", scraped_text[:6000])
+        
+        logger.debug(f"Sending to LLM {len(scraped_text)} chars of text")
+        response = self.llm.invoke([HumanMessage(content=prompt)])
+        text = response.content if hasattr(response, "content") else str(response)
+        
+        logger.debug(f"LLM raw response ({len(text)} chars): {text[:300]}")
+        
+        try:
+            data = self._parse_json(text)
+        except Exception as e:
+            logger.error(f"Failed to parse LLM JSON: {str(e)}")
+            raise ValueError(f"Failed to parse LLM response as JSON: {str(e)[:200]}. First 800 chars: {text[:800]}")
+        
+        if not isinstance(data, dict):
+            logger.error(f"LLM response is not dict: {type(data).__name__}")
+            raise ValueError(f"LLM did not return a JSON object. Got: {type(data).__name__}")
+        
+        logger.debug(f"Parsed recipe: title={data.get('title')}, ingredients={len(data.get('ingredients', []))}, instructions={len(data.get('instructions', []))}")
+        return data
+
+    def _extract_text_with_beautifulsoup(self, html: str) -> str:
+        soup = BeautifulSoup(html or "", "html.parser")
+        for tag in soup(["script", "style", "noscript", "svg", "iframe"]):
+            tag.decompose()
+
+        useful_blocks: list[str] = []
+        # Prioritized selectors to find recipe content
+        selectors = [
+            "[class*=ingredient]",
+            "[id*=ingredient]",
+            "[class*=instruction]",
+            "[id*=instruction]",
+            "[class*=direction]",
+            "[id*=direction]",
+            "[class*=recipe]",
+            "[id*=recipe]",
+            "[class*=method]",
+            "[id*=method]",
+            "h1",
+            "[class*=nutrition]",
+            "[class*=summary]",
+            "main",
+            "article",
+        ]
+
+        seen: set[str] = set()
+        for selector in selectors:
             try:
-                import re
-                m = re.search(r"(\d+)", str(serv_val))
-                if m:
-                    servings = int(m.group(1))
+                for node in soup.select(selector):
+                    text = self._clean_text(node.get_text("\n"))
+                    if text and text not in seen and len(text) > 10:
+                        seen.add(text)
+                        useful_blocks.append(text)
             except Exception:
-                # If parsing fails, default to 1 serving
-                servings = 1
+                continue
 
-        calories = max(100, 200 * servings)
-        result['nutrition'] = {'calories': calories, 'protein': f"{int(calories*0.1)}g", 'carbs': f"{int(calories*0.4)}g", 'fat': f"{int(calories*0.3)}g"}
+        # If we didn't find much, add the full body text
+        if len(useful_blocks) < 3:
+            body_text = self._clean_text(soup.get_text("\n"))
+            if body_text and body_text not in seen:
+                useful_blocks.append(body_text)
 
-        # SUBSTITUTION SUGGESTIONS: Recommend dietary alternatives based on ingredients
-        # Strategy: detect common ingredients and suggest health/dietary alternatives
-        # Examples: butter → olive oil (heart health), milk → plant-based (lactose-free)
-        subs = []
-        items_text = ' '.join([i['item'].lower() for i in parsed_ingredients if i.get('item')])
-        if 'butter' in items_text:
-            subs.append('Replace butter with olive oil for a dairy-free option.')
-        if 'milk' in items_text:
-            subs.append('Use almond milk or oat milk as a dairy-free replacement for milk.')
-        if 'sugar' in items_text:
-            subs.append('Replace granulated sugar with honey or maple syrup (adjust liquids).')
-        # Add generic substitutions if we have fewer than 3
-        generic = ["Use whole wheat alternatives where applicable.", "Use Greek yogurt instead of sour cream for tang and protein."]
-        for g in generic:
-            if len(subs) >= 3:
-                break
-            if g not in subs:
-                subs.append(g)
-        # Return up to 3 substitutions
-        result['substitutions'] = subs[:3]
-
-        # SHOPPING LIST: Categorize ingredients for organized store navigation
-        # Categories: dairy, produce, pantry, bakery, spices (matches typical grocery layout)
-        categories = {'dairy': [], 'produce': [], 'pantry': [], 'bakery': [], 'spices': []}
-        for ing in parsed_ingredients:
-            it = (ing.get('item') or '').lower()
-            # Use keyword matching to categorize each ingredient
-            if any(x in it for x in ['cheese', 'milk', 'butter', 'yogurt']):
-                categories['dairy'].append(it)
-            elif any(x in it for x in ['onion', 'garlic', 'tomato', 'lemon', 'potato', 'pepper']):
-                categories['produce'].append(it)
-            elif any(x in it for x in ['bread', 'baguette']):
-                categories['bakery'].append(it)
-            elif any(x in it for x in ['salt', 'pepper', 'cumin', 'paprika']):
-                categories['spices'].append(it)
-            elif it:
-                # Catch-all for anything else (oils, grains, canned goods, etc.)
-                categories['pantry'].append(it)
-        # Remove duplicates and exclude empty categories
-        shopping = {k: list(dict.fromkeys(v)) for k, v in categories.items() if v}
-        result['shopping_list'] = shopping
-
-        # RELATED RECIPES: Suggest complementary dishes based on recipe type
-        # Strategy: detect dish type from title keywords and recommend pairings
-        related = []
-        if result.get('title'):
-            t = result['title'].lower()
-            if 'grilled' in t or 'sandwich' in t:
-                # Grilled/sandwich recipes pair well with soups and salads
-                related = ['Tomato Soup', 'Caprese Sandwich', 'French Onion Grilled Cheese']
-            elif 'chicken' in t:
-                # Chicken dishes pair well with vegetable sides and starches
-                related = ['Roasted Vegetables', 'Mashed Potatoes', 'Green Salad']
-        result['related_recipes'] = related
-
+        result = "\n\n".join(useful_blocks)[:6000]
+        if not result.strip():
+            raise ValueError("No readable content extracted from HTML")
         return result
+
+    def _normalize_recipe(self, recipe: Dict[str, Any]) -> Dict[str, Any]:
+        ingredients = recipe.get("ingredients") or []
+        if not isinstance(ingredients, list):
+            ingredients = []
+        ingredients = [self._normalize_ingredient(item) for item in ingredients]
+        ingredients = [item for item in ingredients if item.get("item")]
+
+        instructions = recipe.get("instructions") or []
+        if isinstance(instructions, str):
+            instructions = [instructions]
+        instructions = [str(step).strip() for step in instructions if str(step).strip()]
+
+        nutrition = recipe.get("nutrition_estimate") or recipe.get("nutrition") or {}
+        if not isinstance(nutrition, dict):
+            nutrition = {}
+
+        substitutions = recipe.get("substitutions") or []
+        if isinstance(substitutions, str):
+            substitutions = [substitutions]
+        substitutions = [str(item).strip() for item in substitutions if str(item).strip()][:3]
+        
+        related = recipe.get("related_recipes") or []
+        if isinstance(related, str):
+            related = [related]
+        related = [str(item).strip() for item in related if str(item).strip()][:3]
+        
+        shopping = recipe.get("shopping_list") or {}
+        if not isinstance(shopping, dict):
+            shopping = {}
+
+        normalized = {
+            "title": self._nullable_string(recipe.get("title")),
+            "cuisine": self._nullable_string(recipe.get("cuisine")),
+            "prep_time": self._nullable_string(recipe.get("prep_time")),
+            "cook_time": self._nullable_string(recipe.get("cook_time")),
+            "total_time": self._nullable_string(recipe.get("total_time")),
+            "servings": recipe.get("servings"),
+            "difficulty": self._normalize_difficulty(recipe.get("difficulty"), instructions),
+            "ingredients": ingredients,
+            "instructions": instructions,
+            "nutrition": self._normalize_nutrition(nutrition),
+            "nutrition_estimate": self._normalize_nutrition(nutrition),
+            "substitutions": substitutions,
+            "shopping_list": shopping if isinstance(shopping, dict) else {},
+            "related_recipes": related,
+        }
+
+        # Validation
+        if not normalized["title"]:
+            raise ValueError(f"MISSING: Recipe title is required. LLM returned: {recipe.get('title')}")
+        if not normalized["ingredients"]:
+            raise ValueError(f"MISSING: At least 1 ingredient is required. LLM returned: {ingredients}")
+        if not normalized["instructions"]:
+            raise ValueError(f"MISSING: At least 1 instruction is required. LLM returned: {instructions}")
+        if not normalized["substitutions"] or len(normalized["substitutions"]) < 3:
+            logger.warning(f"WARNING: Expected 3 substitutions, got {len(normalized['substitutions'])}")
+        if not normalized["related_recipes"] or len(normalized["related_recipes"]) < 3:
+            logger.warning(f"WARNING: Expected 3 related recipes, got {len(normalized['related_recipes'])}")
+        if not normalized["shopping_list"] or len(normalized["shopping_list"]) < 2:
+            logger.warning(f"WARNING: Expected shopping list with 2+ categories, got {len(normalized.get('shopping_list', {}))}")
+
+        return normalized
+
+    def _normalize_ingredient(self, value: Any) -> Dict[str, str | None]:
+        if isinstance(value, dict):
+            return {
+                "quantity": self._nullable_string(value.get("quantity")),
+                "unit": self._nullable_string(value.get("unit")),
+                "item": self._nullable_string(value.get("item")) or "",
+            }
+
+        text = str(value).strip()
+        match = re.match(r"^([\d./\-\s]+)?\s*([A-Za-z]+)?\s+(.+)$", text)
+        if match:
+            quantity = self._nullable_string(match.group(1))
+            unit = self._nullable_string(match.group(2))
+            item = self._nullable_string(match.group(3)) or text
+            return {"quantity": quantity, "unit": unit, "item": item}
+        return {"quantity": None, "unit": None, "item": text}
+
+    def _normalize_nutrition(self, value: Dict[str, Any]) -> Dict[str, Any]:
+        calories = value.get("calories")
+        try:
+            calories = int(calories) if calories is not None else None
+        except Exception:
+            calories = None
+        return {
+            "calories": calories,
+            "protein": self._nullable_string(value.get("protein")),
+            "carbs": self._nullable_string(value.get("carbs")),
+            "fat": self._nullable_string(value.get("fat")),
+        }
+
+    def _normalize_difficulty(self, value: Any, instructions: list[str]) -> str:
+        text = str(value or "").strip().lower()
+        if text in {"easy", "medium", "hard"}:
+            return text
+        if len(instructions) <= 4:
+            return "easy"
+        if len(instructions) <= 10:
+            return "medium"
+        return "hard"
+
+    def _parse_json(self, text: str) -> Any:
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?", "", cleaned).strip()
+            cleaned = re.sub(r"```$", "", cleaned).strip()
+
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parse error at {e.pos}: {e.msg}")
+            # Try to extract valid JSON
+            start = cleaned.find("{")
+            end = cleaned.rfind("}") + 1
+            if start == -1 or end <= start:
+                raise ValueError(f"No JSON object found in response: {cleaned[:200]}")
+            
+            json_str = cleaned[start:end]
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                # Try to repair common issues
+                # Remove trailing commas before } or ]
+                json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+                try:
+                    return json.loads(json_str)
+                except json.JSONDecodeError:
+                    # Last resort: try to close unclosed arrays
+                    open_brackets = json_str.count('[') - json_str.count(']')
+                    open_braces = json_str.count('{') - json_str.count('}')
+                    if open_brackets > 0 or open_braces > 0:
+                        json_str += ']' * open_brackets + '}' * open_braces
+                        try:
+                            return json.loads(json_str)
+                        except json.JSONDecodeError:
+                            pass
+                    raise ValueError(f"Could not parse JSON from LLM response. Last 500 chars: {cleaned[-500:]}")
+
+    def _clean_text(self, text: str) -> str:
+        lines = [line.strip() for line in text.splitlines()]
+        lines = [line for line in lines if line]
+        return "\n".join(lines)
+
+    def _nullable_string(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, list):
+            value = ", ".join(str(item) for item in value if item)
+        text = str(value).strip()
+        if not text or text.lower() in {"null", "none", "n/a"}:
+            return None
+        return text
+
+    def _text_to_html(self, text: str) -> str:
+        paragraphs = "".join(f"<p>{line.strip()}</p>" for line in text.splitlines() if line.strip())
+        return f"<html><body>{paragraphs}</body></html>"

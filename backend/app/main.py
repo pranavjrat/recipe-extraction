@@ -1,15 +1,16 @@
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 import logging
 
-from .database import Base, engine, get_db
+from .database import get_db, init_db
 from .models import Recipe
 from .schemas import RecipeCreate, RecipeResponse, RecipeListItem, MealPlanRequest, MealPlanResponse
 from .extractor import RecipeExtractor
 from .meal_planner import MealPlanner
 
-Base.metadata.create_all(bind=engine)
+init_db()
 
 app = FastAPI(title="Recipe Extractor API")
 
@@ -29,12 +30,23 @@ meal_planner = MealPlanner()
 @app.post('/api/extract', response_model=RecipeResponse, status_code=201)
 def extract_recipe(payload: RecipeCreate, db: Session = Depends(get_db)):
     url = str(payload.url)
-    existing = db.query(Recipe).filter(Recipe.url == url).first()
-    if existing:
-        return existing
-
     try:
+        logger.info(f"Extracting recipe from: {url}")
+        existing = db.query(Recipe).filter(Recipe.url == url).first()
+        if existing and existing.title != "Failed Extraction":
+            logger.info(f"Recipe already cached: {existing.title}")
+            return existing
+        if existing:
+            db.delete(existing)
+            db.commit()
+
         result = extractor.extract(url, raw_html=payload.raw_html, raw_text=payload.raw_text)
+        logger.info(f"Successfully extracted recipe: {result.get('title')}")
+        logger.info(f"  - Ingredients: {len(result.get('ingredients', []))} items")
+        logger.info(f"  - Instructions: {len(result.get('instructions', []))} steps")
+        logger.info(f"  - Substitutions: {len(result.get('substitutions', []))} options")
+        logger.info(f"  - Shopping list: {len(result.get('shopping_list', {}))} categories")
+        logger.info(f"  - Related recipes: {len(result.get('related_recipes', []))} suggestions")
 
         db_recipe = Recipe(
             url=result.get('url'),
@@ -51,18 +63,36 @@ def extract_recipe(payload: RecipeCreate, db: Session = Depends(get_db)):
             substitutions=result.get('substitutions'),
             shopping_list=result.get('shopping_list'),
             related_recipes=result.get('related_recipes'),
-            scraped_html=result.get('scraped_html')
+            scraped_html=result.get('scraped_html'),
+            extracted_text=result.get('extracted_text'),
+            llm_response=result.get('llm_response'),
         )
 
         db.add(db_recipe)
-        db.commit()
-        db.refresh(db_recipe)
+        try:
+            db.commit()
+            db.refresh(db_recipe)
+        except IntegrityError:
+            db.rollback()
+            existing = db.query(Recipe).filter(Recipe.url == url).first()
+            if existing:
+                return existing
+            raise
 
         return db_recipe
 
     except PermissionError as e:
         logger.warning(f"Blocked recipe site: {e}")
         raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        logger.error(f"Validation error for {url}: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except IntegrityError:
+        db.rollback()
+        existing = db.query(Recipe).filter(Recipe.url == url).first()
+        if existing:
+            return existing
+        raise HTTPException(status_code=409, detail="Recipe Saved in History")
     except Exception as e:
         logger.error(f"Extraction failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

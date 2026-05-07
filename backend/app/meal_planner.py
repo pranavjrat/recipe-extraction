@@ -18,17 +18,17 @@ class MealPlanner:
         self.llm = None
         if LLM_AVAILABLE:
             api_key = os.getenv("GROQ_API_KEY") or os.getenv("LLM_API_KEY")
-            if api_key:
+            if api_key and api_key.startswith("gsk_"):
                 self.llm = ChatGroq(api_key=api_key, model="llama-3.1-8b-instant", temperature=0.2)
 
-        base_dir = Path(__file__).resolve().parent.parent
+        base_dir = Path(__file__).resolve().parents[2]
         self.prompt_path = base_dir / "prompts" / "prompt_meal_plan.txt"
 
     def build_plan(self, recipes: List[Dict[str, Any]]) -> Dict[str, Any]:
         if self.llm and self.prompt_path.exists():
             with self.prompt_path.open("r", encoding="utf-8") as handle:
                 template = handle.read()
-            prompt = template.format(recipes_json=json.dumps(recipes, ensure_ascii=False))
+            prompt = template.replace("{recipes_json}", json.dumps(recipes, ensure_ascii=False))
             response = self.llm.invoke([HumanMessage(content=prompt)])
             text = response.content if hasattr(response, "content") else str(response)
             start = text.find("{")
@@ -61,6 +61,8 @@ class MealPlanner:
                 for item in items or []:
                     normalized = str(item).strip().lower()
                     if not normalized:
+                        continue
+                    if any(entry["item"] == normalized for entries in combined.values() for entry in entries.values()):
                         continue
                     key = f"{normalized}|"
                     bucket.setdefault(key, {"item": normalized, "unit": "", "quantity": Fraction(0)})
@@ -102,6 +104,8 @@ class MealPlanner:
         return total
 
     def _format_quantity(self, quantity: Fraction) -> str:
+        if quantity == 0:
+            return ""
         if quantity.denominator == 1:
             return str(quantity.numerator)
         return f"{quantity.numerator}/{quantity.denominator}"
