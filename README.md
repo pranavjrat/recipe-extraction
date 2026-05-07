@@ -74,13 +74,29 @@ python -m http.server 3000
 
 Recipe extraction requires one valid LLM key. The backend scrapes the recipe page, cleans the HTML with BeautifulSoup, sends the extracted text to the configured LangChain chat model, validates the JSON response, and stores both the scraped text and generated JSON in PostgreSQL.
 
-## Frontend Setup
+## Environment Configuration
 
-The frontend is static HTML, CSS, and JavaScript.
+Copy or create `.env` in the project root with your configuration:
 
-You can open `frontend/index.html` directly or serve the folder with a local static server.
+```bash
+DATABASE_URL=postgresql://postgres:password@localhost:5432/recipe_planner
+BACKEND_PORT=8001
+FRONTEND_PORT=3000
 
-The frontend expects the API to run at `http://localhost:8001`.
+# Use Groq (Free Tier - Recommended)
+GROQ_API_KEY=gsk_your_groq_api_key_here
+GROQ_MODEL=llama-3.1-8b-instant
+
+# OR use Gemini (has free tier but limited quota)
+# GEMINI_API_KEY=your_gemini_key_here
+# GEMINI_MODEL=gemini-1.5-flash
+```
+
+**Get API Keys:**
+- **Groq** (recommended): https://console.groq.com/keys - Free tier with good rate limits
+- **Gemini**: https://aistudio.google.com/apikey - Free tier but limited quota
+
+If using Groq, ensure the key starts with `gsk_`. The backend will prioritize Groq if both keys are present.
 
 ## API Endpoints
 
