@@ -31,71 +31,45 @@ It provides:
 
 ## Run The App
 
-From the repository root, start both servers with:
+**Option 1: Run Both Servers Together (Recommended)**
+
+From the repository root:
 
 ```bash
-bash run_app.sh
+./run_app.sh
 ```
 
-The script uses `backend/.venv` when available, launches the backend at `http://127.0.0.1:8001`, and starts the frontend on `http://127.0.0.1:3000` or the next free port if 3000 is already in use.
+This starts:
+- **Backend API**: http://127.0.0.1:8001
+- **Frontend UI**: http://127.0.0.1:3000 (or next available port)
 
-Press `Ctrl+C` in the terminal to stop both processes.
+Press `Ctrl+C` to stop both servers.
 
-## PostgreSQL Setup
+**Option 2: Run Manually**
 
-Copy the example environment file and start PostgreSQL:
-
+Start PostgreSQL (if not already running):
 ```bash
-cp .env.example .env
-docker compose up -d db
-```
-
-Or start PostgreSQL directly with Docker:
-
-```bash
-docker run -d \
-  --name postgres \
+docker run -d --name postgres \
   -e POSTGRES_PASSWORD=password \
   -e POSTGRES_DB=recipe_planner \
   -p 5432:5432 \
   postgres:15
 ```
 
-Then run the backend from `backend/` so it picks up `DATABASE_URL` from `.env`:
-
-```bash
-cd backend
-uvicorn app.main:app --reload --port 8001
-```
-
-If you use the root launcher, it will still start the frontend and backend together. PostgreSQL must be running before the backend starts.
-
-## Backend Setup
-
-Install dependencies:
-
+Start backend:
 ```bash
 cd backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-Run the API:
-
-```bash
 uvicorn app.main:app --reload --port 8001
 ```
 
-Environment variables:
-
+Start frontend (in another terminal):
 ```bash
-DATABASE_URL=postgresql://postgres:password@localhost:5432/recipe_planner
-GEMINI_API_KEY=your_gemini_key_here
-GEMINI_MODEL=gemini-1.5-flash
-# or:
-GROQ_API_KEY=your_groq_key_here
-GROQ_MODEL=llama-3.1-8b-instant
+cd frontend
+# Either serve locally or open index.html directly in browser
+python -m http.server 3000
 ```
 
 Recipe extraction requires one valid LLM key. The backend scrapes the recipe page, cleans the HTML with BeautifulSoup, sends the extracted text to the configured LangChain chat model, validates the JSON response, and stores both the scraped text and generated JSON in PostgreSQL.
