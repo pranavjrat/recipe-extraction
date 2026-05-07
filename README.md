@@ -155,7 +155,29 @@ Request body:
 ```
 
 Returns a small day-by-day meal plan and a merged shopping list for the selected saved recipes.
+## Troubleshooting
 
+**"Invalid API Key" Error**
+- Ensure GROQ_API_KEY or GEMINI_API_KEY is set in `.env`
+- Groq keys should start with `gsk_`
+- Get a free key at https://console.groq.com/keys
+
+**"Request too large" (413 Error)**
+- Token limit exceeded for the LLM model
+- Solution: Upgrade Groq model in `.env`:
+  ```bash
+  GROQ_MODEL=llama-3.2-70b-instant
+  ```
+
+**Database Connection Failed**
+- Ensure PostgreSQL is running on localhost:5432
+- Check DATABASE_URL in `.env`
+- Run: `docker ps` to verify container is up
+
+**Frontend Can't Connect to Backend**
+- Ensure backend is running on http://127.0.0.1:8001
+- Check BACKEND_PORT and FRONTEND_PORT in `.env`
+- Verify no firewalls blocking localhost connections
 ## Testing
 
 ### Quick Test (Without Running Server)
